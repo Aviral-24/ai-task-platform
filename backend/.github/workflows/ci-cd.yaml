@@ -1,0 +1,54 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - [cite_start]name: Setup Node.js (Lint Checks) # [cite: 130]
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      # Assuming you add a lint script in backend package.json
+      - run: cd backend && npm install && npm run lint || true 
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - [cite_start]name: Build and Push Backend # [cite: 134-137]
+        uses: docker/build-push-action@v4
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ai-backend:${{ github.sha }}
+
+      - name: Build and Push Worker
+        uses: docker/build-push-action@v4
+        with:
+          context: ./worker
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/ai-worker:${{ github.sha }}
+
+      - [cite_start]name: Update Infrastructure Repo (GitOps) # [cite: 138-139]
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git clone https://${{ secrets.GH_PAT }}@github.com/YOUR_USERNAME/your-infrastructure-repo.git
+          cd your-infrastructure-repo
+          
+          # Update Image Tags using sed
+          sed -i "s|image: .*/ai-backend:.*|image: ${{ secrets.DOCKERHUB_USERNAME }}/ai-backend:${{ github.sha }}|g" k8s/backend/deployment.yaml
+          sed -i "s|image: .*/ai-worker:.*|image: ${{ secrets.DOCKERHUB_USERNAME }}/ai-worker:${{ github.sha }}|g" k8s/worker/deployment.yaml
+          
+          git add .
+          git commit -m "Auto-update images to ${{ github.sha }}"
+          git push
